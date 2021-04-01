@@ -17,26 +17,35 @@ public class StaticResetHelper {
    private static Collection<ClassState> classes = new ArrayList<>();
 
    public static void load() {
-      classes.add(new ClassState(OneSignal.class, new OtherFieldHandler() {
-         @Override
-         public boolean onOtherField(Field field) throws Exception {
-            if (field.getName().equals("unprocessedOpenedNotifis")) {
-               field.set(null, new ArrayList<JSONArray>());
-               return true;
-            }
-            return false;
+      classes.add(new ClassState(OneSignal.class, field -> {
+         if (field.getName().equals("unprocessedOpenedNotifis")) {
+            field.set(null, new ArrayList<JSONArray>());
+            return true;
+         } else if (field.getName().equals("remoteParamController")) {
+            field.set(null, new OSRemoteParamController());
+            return true;
+         } else if (field.getName().equals("taskController")) {
+            OSLogger logger = new OSLogWrapper();
+            field.set(null, new OSTaskController(logger));
+            return true;
+         } else if (field.getName().equals("taskRemoteController")) {
+            OSLogger logger = new OSLogWrapper();
+            field.set(null, new OSTaskRemoteController(OneSignal.getRemoteParamController(), logger));
+            return true;
+         } else if (field.getName().equals("inAppMessageControllerFactory")) {
+            field.set(null, new OSInAppMessageControllerFactory());
+            return true;
          }
+         return false;
       }));
 
-      classes.add(new ClassState(OneSignalStateSynchronizer.class, new OtherFieldHandler() {
-         @Override
-         public boolean onOtherField(Field field) throws Exception {
-            if (field.getName().equals("userStatePushSynchronizer") || field.getName().equals("userStateEmailSynchronizer")) {
-               field.set(null, null);
-               return true;
-            }
-            return false;
+      classes.add(new ClassState(OneSignalStateSynchronizer.class, field
+              -> {
+         if (field.getName().equals("userStatePushSynchronizer") || field.getName().equals("userStateEmailSynchronizer")) {
+            field.set(null, null);
+            return true;
          }
+         return false;
       }));
       
       classes.add(new ClassState(OneSignalChromeTabAndroidFrame.class, null));
@@ -44,19 +53,23 @@ public class StaticResetHelper {
       classes.add(new ClassState(LocationController.class, null));
       classes.add(new ClassState(OSInAppMessageController.class, null));
       classes.add(new ClassState(ActivityLifecycleListener.class, null));
-      classes.add(new ClassState(OSDynamicTriggerController.class, new OtherFieldHandler() {
-         @Override
-         public boolean onOtherField(Field field) throws Exception {
-            if (field.getName().equals("sessionLaunchTime")) {
-               field.set(null, new Date());
-               return true;
-            }
-            return false;
+      classes.add(new ClassState(OSDynamicTriggerController.class, field -> {
+         if (field.getName().equals("sessionLaunchTime")) {
+            field.set(null, new Date());
+            return true;
          }
+         return false;
       }));
       classes.add(new ClassState(FocusTimeController.class, null));
       classes.add(new ClassState(OSSessionManager.class, null));
       classes.add(new ClassState(MockSessionManager.class, null));
+      classes.add(new ClassState(OSNotificationWorkManager.class,  field -> {
+         if (field.getName().equals("notificationIds")) {
+            field.set(null, OSUtils.newConcurrentSet());
+            return true;
+         }
+         return false;
+      }));
    }
 
    private interface OtherFieldHandler {
@@ -108,13 +121,13 @@ public class StaticResetHelper {
    }
 
    public static void saveStaticValues() throws Exception {
-      for(ClassState aClass : classes)
+      for (ClassState aClass : classes)
          aClass.saveStaticValues();
    }
 
    public static void restSetStaticFields() throws Exception {
-      for(ClassState aClass : classes)
-            aClass.restSetStaticFields();
+      for (ClassState aClass : classes)
+         aClass.restSetStaticFields();
 
       clearWebViewManger();
    }

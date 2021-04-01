@@ -83,14 +83,16 @@ class OSInAppMessageRedisplayStats {
     }
 
     boolean shouldDisplayAgain() {
-        return displayQuantity < displayLimit;
+        boolean result = displayQuantity < displayLimit;
+        OneSignal.Log(OneSignal.LOG_LEVEL.DEBUG, "OSInAppMessage shouldDisplayAgain: " + result);
+        return result;
     }
 
     boolean isDelayTimeSatisfied() {
-        if (lastDisplayTime < 0) {
+        if (lastDisplayTime < 0)
             return true;
-        }
-        long currentTimeInSeconds = System.currentTimeMillis() / 1000;
+
+        long currentTimeInSeconds = OneSignal.getTime().getCurrentTimeMillis() / 1000;
         // Calculate gap between display times
         long diffInSeconds = currentTimeInSeconds - lastDisplayTime;
         OneSignal.Log(OneSignal.LOG_LEVEL.DEBUG, "OSInAppMessage lastDisplayTime: " + lastDisplayTime +

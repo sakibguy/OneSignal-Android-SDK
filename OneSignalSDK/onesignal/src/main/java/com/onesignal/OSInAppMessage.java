@@ -1,15 +1,19 @@
 package com.onesignal;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.Set;
 
 class OSInAppMessage {
@@ -18,7 +22,9 @@ class OSInAppMessage {
     private static final String IAM_VARIANTS = "variants";
     private static final String IAM_TRIGGERS = "triggers";
     private static final String IAM_REDISPLAY_STATS = "redisplay";
-    private static final String DISPLAY_DURATION = "display_duration";
+    private static final String DISPLAY_DURATION = "displayDuration";
+    private static final String END_TIME = "end_time";
+    private static final String HAS_LIQUID = "has_liquid";
 
     /**
      * The unique identifier for this in-app message
@@ -57,7 +63,9 @@ class OSInAppMessage {
     private boolean displayedInSession = false;
     private boolean triggerChanged = false;
     private boolean actionTaken;
+    private Date endTime;
     boolean isPreview;
+    private boolean hasLiquid;
 
     OSInAppMessage(boolean isPreview) {
         this.isPreview = isPreview;
@@ -76,9 +84,33 @@ class OSInAppMessage {
         this.variants = parseVariants(json.getJSONObject(IAM_VARIANTS));
         this.triggers = parseTriggerJson(json.getJSONArray(IAM_TRIGGERS));
         this.clickedClickIds = new HashSet<>();
+        this.endTime = parseEndTimeJson(json);
+        if (json.has(HAS_LIQUID))
+            this.hasLiquid = json.getBoolean(HAS_LIQUID);
 
         if (json.has(IAM_REDISPLAY_STATS))
             this.redisplayStats = new OSInAppMessageRedisplayStats(json.getJSONObject(IAM_REDISPLAY_STATS));
+    }
+
+    private Date parseEndTimeJson(JSONObject json) {
+        String endTimeString;
+        try {
+            endTimeString = json.getString(END_TIME);
+        } catch (JSONException e) {
+            return null;
+        }
+
+        if (endTimeString.equals("null"))
+            return null;
+
+        try {
+            SimpleDateFormat format = OneSignalSimpleDateFormat.iso8601Format();
+            return format.parse(endTimeString);
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+
+        return null;
     }
 
     private HashMap<String, HashMap<String, String>> parseVariants(JSONObject json) throws JSONException {
@@ -152,6 +184,14 @@ class OSInAppMessage {
 
             json.put(IAM_TRIGGERS, orConditions);
 
+            if (this.endTime != null) {
+                SimpleDateFormat format = OneSignalSimpleDateFormat.iso8601Format();
+                String endTimeString = format.format(this.endTime);
+                json.put(END_TIME, endTimeString);
+            }
+
+            json.put(HAS_LIQUID, hasLiquid);
+
         } catch (JSONException exception) {
             exception.printStackTrace();
         }
@@ -193,6 +233,14 @@ class OSInAppMessage {
         this.displayedInSession = displayedInSession;
     }
 
+    boolean getHasLiquid() {
+        return hasLiquid;
+    }
+
+    void setHasLiquid(boolean hasLiquid) {
+        this.hasLiquid = hasLiquid;
+    }
+
     @NonNull
     Set<String> getClickedClickIds() {
         return clickedClickIds;
@@ -222,11 +270,17 @@ class OSInAppMessage {
     public String toString() {
         return "OSInAppMessage{" +
                 "messageId='" + messageId + '\'' +
+                ", variants=" + variants +
                 ", triggers=" + triggers +
                 ", clickedClickIds=" + clickedClickIds +
-                ", displayStats=" + redisplayStats +
+                ", redisplayStats=" + redisplayStats +
+                ", displayDuration=" + displayDuration +
+                ", displayedInSession=" + displayedInSession +
+                ", triggerChanged=" + triggerChanged +
                 ", actionTaken=" + actionTaken +
                 ", isPreview=" + isPreview +
+                ", endTime=" + endTime +
+                ", hasLiquid=" + hasLiquid +
                 '}';
     }
 
@@ -244,4 +298,11 @@ class OSInAppMessage {
         return result;
     }
 
+    public boolean isFinished() {
+        if (this.endTime == null) {
+            return false;
+        }
+        Date now = new Date();
+        return this.endTime.before(now);
+    }
 }

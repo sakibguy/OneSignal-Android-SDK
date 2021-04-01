@@ -1,15 +1,16 @@
 package com.onesignal;
 
 import android.os.Process;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
 
-import com.onesignal.influence.model.OSInfluence;
-import com.onesignal.influence.model.OSInfluenceType;
-import com.onesignal.outcomes.OSOutcomeEventsFactory;
-import com.onesignal.outcomes.model.OSOutcomeEventParams;
-import com.onesignal.outcomes.model.OSOutcomeSource;
-import com.onesignal.outcomes.model.OSOutcomeSourceBody;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import com.onesignal.influence.domain.OSInfluence;
+import com.onesignal.influence.domain.OSInfluenceType;
+import com.onesignal.outcomes.data.OSOutcomeEventsFactory;
+import com.onesignal.outcomes.domain.OSOutcomeEventParams;
+import com.onesignal.outcomes.domain.OSOutcomeSource;
+import com.onesignal.outcomes.domain.OSOutcomeSourceBody;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,6 +21,8 @@ class OSOutcomeEventsController {
     private static final String OS_SAVE_OUTCOMES = "OS_SAVE_OUTCOMES";
     private static final String OS_SEND_SAVED_OUTCOMES = "OS_SEND_SAVED_OUTCOMES";
     private static final String OS_SAVE_UNIQUE_OUTCOME_NOTIFICATIONS = "OS_SAVE_UNIQUE_OUTCOME_NOTIFICATIONS";
+
+    private final static String OS_DELETE_CACHED_UNIQUE_OUTCOMES_NOTIFICATIONS_THREAD = "OS_DELETE_CACHED_UNIQUE_OUTCOMES_NOTIFICATIONS_THREAD";
 
     // Keeps track of unique outcome events sent for UNATTRIBUTED sessions on a per session level
     private Set<String> unattributedUniqueOutcomeEventsSentOnSession;
@@ -54,6 +57,21 @@ class OSOutcomeEventsController {
         OneSignal.Log(OneSignal.LOG_LEVEL.DEBUG, "OneSignal cleanOutcomes for session");
         unattributedUniqueOutcomeEventsSentOnSession = OSUtils.newConcurrentSet();
         saveUnattributedUniqueOutcomeEvents();
+    }
+
+    /**
+     * Deletes cached unique outcome notifications whose ids do not exist inside of the NotificationTable.TABLE_NAME
+     */
+    void cleanCachedUniqueOutcomes() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                Thread.currentThread().setPriority(Process.THREAD_PRIORITY_BACKGROUND);
+
+                outcomeEventsFactory.getRepository().cleanCachedUniqueOutcomeEventNotifications(
+                        OneSignalDbContract.NotificationTable.TABLE_NAME, OneSignalDbContract.NotificationTable.COLUMN_NAME_NOTIFICATION_ID);
+            }
+        }, OS_DELETE_CACHED_UNIQUE_OUTCOMES_NOTIFICATIONS_THREAD).start();
     }
 
     /**
@@ -183,7 +201,7 @@ class OSOutcomeEventsController {
                                            @NonNull final float weight,
                                            @NonNull List<OSInfluence> influences,
                                            @Nullable final OneSignal.OutcomeCallback callback) {
-        final long timestampSeconds = System.currentTimeMillis() / 1000;
+        final long timestampSeconds = OneSignal.getTime().getCurrentTimeMillis() / 1000;
         final int deviceType = new OSUtils().getDeviceType();
         final String appId = OneSignal.appId;
 
@@ -204,6 +222,8 @@ class OSOutcomeEventsController {
                     break;
                 case DISABLED:
                     OneSignal.Log(OneSignal.LOG_LEVEL.VERBOSE, "Outcomes disabled for channel: " + influence.getInfluenceChannel());
+                    if (callback != null)
+                        callback.onSuccess(null);
                     return; // finish method
             }
         }
@@ -211,12 +231,14 @@ class OSOutcomeEventsController {
         if (directSourceBody == null && indirectSourceBody == null && !unattributed) {
             // Disabled for all channels
             OneSignal.Log(OneSignal.LOG_LEVEL.VERBOSE, "Outcomes disabled for all channels");
+            if (callback != null)
+                callback.onSuccess(null);
             return;
         }
 
         OSOutcomeSource source = new OSOutcomeSource(directSourceBody, indirectSourceBody);
 
-        final OSOutcomeEventParams eventParams = new OSOutcomeEventParams(name, source, weight);
+        final OSOutcomeEventParams eventParams = new OSOutcomeEventParams(name, source, weight, 0);
 
         OneSignalApiResponseHandler responseHandler = new OneSignalApiResponseHandler() {
             @Override
@@ -225,7 +247,7 @@ class OSOutcomeEventsController {
 
                 // The only case where an actual success has occurred and the OutcomeEvent should be sent back
                 if (callback != null)
-                    callback.onSuccess(OutcomeEvent.fromOutcomeEventParamsV2toOutcomeEventV1(eventParams));
+                    callback.onSuccess(OSOutcomeEvent.fromOutcomeEventParamsV2toOutcomeEventV1(eventParams));
             }
 
             @Override

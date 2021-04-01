@@ -6,8 +6,8 @@ import android.app.Activity;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import android.util.Base64;
 import android.view.View;
 import android.webkit.JavascriptInterface;
@@ -18,7 +18,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.UnsupportedEncodingException;
-import java.lang.ref.WeakReference;
 
 import static com.onesignal.OSViewUtils.dpToPx;
 
@@ -64,7 +63,8 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
     @NonNull private Activity activity;
     @NonNull private OSInAppMessage message;
 
-    private boolean firstShow = true;
+    private String currentActivityName = null;
+    private Integer lastPageHeight = null;
 
     interface OneSignalGenericCallback {
         void onComplete();
@@ -83,7 +83,8 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
      * @param htmlStr the html to display on the WebView
      */
     static void showHTMLString(@NonNull final OSInAppMessage message, @NonNull final String htmlStr) {
-        final Activity currentActivity = ActivityLifecycleHandler.curActivity;
+        final Activity currentActivity = OneSignal.getCurrentActivity();
+        OneSignal.onesignalLog(OneSignal.LOG_LEVEL.DEBUG, "in app message showHTMLString on currentActivity: " + currentActivity);
         /* IMPORTANT
          * This is the starting route for grabbing the current Activity and passing it to InAppMessageView */
         if (currentActivity != null) {
@@ -98,9 +99,9 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
                         initInAppMessage(currentActivity, message, htmlStr);
                     }
                 });
-            }
-            else
+            } else {
                 initInAppMessage(currentActivity, message, htmlStr);
+            }
             return;
         }
 
@@ -154,9 +155,11 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
         static final String EVENT_TYPE_KEY = "type";
         static final String EVENT_TYPE_RENDERING_COMPLETE = "rendering_complete";
         static final String EVENT_TYPE_ACTION_TAKEN = "action_taken";
+        static final String EVENT_TYPE_PAGE_CHANGE = "page_change";
 
         static final String IAM_DISPLAY_LOCATION_KEY = "displayLocation";
         static final String IAM_PAGE_META_DATA_KEY = "pageMetaData";
+        static final String IAM_DRAG_TO_DISMISS_DISABLED_KEY = "dragToDismissDisabled";
 
         @JavascriptInterface
         public void postMessage(String message) {
@@ -166,11 +169,20 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
                 JSONObject jsonObject = new JSONObject(message);
                 String messageType = jsonObject.getString(EVENT_TYPE_KEY);
 
-                if (messageType.equals(EVENT_TYPE_RENDERING_COMPLETE))
-                    handleRenderComplete(jsonObject);
-                else if (messageType.equals(EVENT_TYPE_ACTION_TAKEN) && !messageView.isDragging()) {
-                    // Added handling so that click actions won't trigger while dragging the IAM
-                    handleActionTaken(jsonObject);
+                switch (messageType) {
+                    case EVENT_TYPE_RENDERING_COMPLETE:
+                        handleRenderComplete(jsonObject);
+                        break;
+                    case EVENT_TYPE_ACTION_TAKEN:
+                        // Added handling so that click actions won't trigger while dragging the IAM
+                        if (!messageView.isDragging())
+                            handleActionTaken(jsonObject);
+                        break;
+                    case EVENT_TYPE_PAGE_CHANGE:
+                        handlePageChange(jsonObject);
+                        break;
+                    default:
+                        break;
                 }
             } catch (JSONException e) {
                 e.printStackTrace();
@@ -180,7 +192,8 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
         private void handleRenderComplete(JSONObject jsonObject) {
             Position displayType = getDisplayLocation(jsonObject);
             int pageHeight = displayType == Position.FULL_SCREEN ? -1 : getPageHeightData(jsonObject);
-            createNewInAppMessageView(displayType, pageHeight);
+            boolean dragToDismissDisabled = getDragToDismissDisabled(jsonObject);
+            createNewInAppMessageView(displayType, pageHeight, dragToDismissDisabled);
         }
 
         private int getPageHeightData(JSONObject jsonObject) {
@@ -202,18 +215,30 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
             return displayLocation;
         }
 
+        private boolean getDragToDismissDisabled(JSONObject jsonObject) {
+            try {
+                return jsonObject.getBoolean(IAM_DRAG_TO_DISMISS_DISABLED_KEY);
+            } catch (JSONException e) {
+                return false;
+            }
+        }
+
         private void handleActionTaken(JSONObject jsonObject) throws JSONException {
             JSONObject body = jsonObject.getJSONObject("body");
             String id = body.optString("id", null);
             if (message.isPreview) {
-                OSInAppMessageController.getController().onMessageActionOccurredOnPreview(message, body);
+                OneSignal.getInAppMessageController().onMessageActionOccurredOnPreview(message, body);
             } else if (id != null) {
-                OSInAppMessageController.getController().onMessageActionOccurredOnMessage(message, body);
+                OneSignal.getInAppMessageController().onMessageActionOccurredOnMessage(message, body);
             }
 
             boolean close = body.getBoolean("close");
             if (close)
                 dismissAndAwaitNextMessage(null);
+        }
+
+        private void handlePageChange(JSONObject jsonObject) throws JSONException {
+            OneSignal.getInAppMessageController().onPageChanged(message, jsonObject);
         }
     }
 
@@ -248,41 +273,59 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
             return;
         }
 
-       // Using post to ensure that the status bar inset is already added to the view
-       OSViewUtils.decorViewReady(activity, new Runnable() {
-          @Override
-          public void run() {
-             // At time point the webView isn't attached to a view
-             // Set the WebView to the max screen size then run JS to evaluate the height.
-             setWebViewToMaxSize(activity);
-             webView.evaluateJavascript(OSJavaScriptInterface.GET_PAGE_META_DATA_JS_FUNCTION, new ValueCallback<String>() {
-                 @Override
-                 public void onReceiveValue(final String value) {
-                    try {
-                       int pagePxHeight = pageRectToViewHeight(activity, new JSONObject(value));
-                       showMessageView(pagePxHeight);
-                    } catch (JSONException e) {
-                       e.printStackTrace();
+        OneSignal.Log(OneSignal.LOG_LEVEL.DEBUG, "In app message new activity, calculate height and show ");
+
+        // Using post to ensure that the status bar inset is already added to the view
+        OSViewUtils.decorViewReady(activity, new Runnable() {
+            @Override
+            public void run() {
+                // At time point the webView isn't attached to a view
+                // Set the WebView to the max screen size then run JS to evaluate the height.
+                setWebViewToMaxSize(activity);
+                webView.evaluateJavascript(OSJavaScriptInterface.GET_PAGE_META_DATA_JS_FUNCTION, new ValueCallback<String>() {
+                    @Override
+                    public void onReceiveValue(final String value) {
+                        try {
+                            int pagePxHeight = pageRectToViewHeight(activity, new JSONObject(value));
+                            showMessageView(pagePxHeight);
+                        } catch (JSONException e) {
+                            e.printStackTrace();
+                        }
                     }
-                 }
-             });
-          }
+                });
+            }
        });
     }
 
     @Override
     void available(final @NonNull Activity activity) {
+        String lastActivityName = this.currentActivityName;
         this.activity = activity;
-        if (firstShow)
+        this.currentActivityName = activity.getLocalClassName();
+
+        if (lastActivityName == null)
             showMessageView(null);
-        else
+        else if (!lastActivityName.equals(currentActivityName)) {
+            // Navigate to new activity while displaying current IAM
+            if (messageView != null)
+                messageView.removeAllViews();
+            showMessageView(lastPageHeight);
+        } else
             calculateHeightAndShowWebViewAfterNewActivity();
     }
 
     @Override
-    void stopped(WeakReference<Activity> reference) {
-        if (messageView != null)
+    void stopped(Activity activity) {
+        OneSignal.Log(OneSignal.LOG_LEVEL.DEBUG, "In app message activity stopped, cleaning views");
+        if (messageView != null && currentActivityName.equals(activity.getLocalClassName()))
             messageView.removeAllViews();
+    }
+
+    @Override
+    void lostFocus() {
+        OneSignal.getInAppMessageController().messageWasDismissedByBackPress(message);
+        removeActivityListener();
+        messageView = null;
     }
 
     private void showMessageView(@Nullable Integer newHeight) {
@@ -291,9 +334,12 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
             return;
         }
 
+        OneSignal.Log(OneSignal.LOG_LEVEL.DEBUG, "In app message, showing first one with height: " + newHeight);
         messageView.setWebView(webView);
-        if (newHeight != null)
+        if (newHeight != null) {
+            lastPageHeight = newHeight;
             messageView.updateHeight(newHeight);
+        }
         messageView.showView(activity);
         messageView.checkIfShouldDismiss();
     }
@@ -341,24 +387,26 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
         webView.layout(0,0, getWebViewMaxSizeX(activity), getWebViewMaxSizeY(activity));
     }
 
-    private void createNewInAppMessageView(@NonNull Position displayLocation, int pageHeight) {
-        messageView = new InAppMessageView(webView, displayLocation, pageHeight, message.getDisplayDuration());
+    private void createNewInAppMessageView(@NonNull Position displayLocation, int pageHeight, boolean dragToDismissDisabled) {
+        lastPageHeight = pageHeight;
+        messageView = new InAppMessageView(webView, displayLocation, pageHeight, message.getDisplayDuration(), dragToDismissDisabled);
         messageView.setMessageController(new InAppMessageView.InAppMessageViewListener() {
             @Override
             public void onMessageWasShown() {
-                firstShow = false;
-                OSInAppMessageController.getController().onMessageWasShown(message);
+                OneSignal.getInAppMessageController().onMessageWasShown(message);
             }
 
             @Override
             public void onMessageWasDismissed() {
-                OSInAppMessageController.getController().messageWasDismissed(message);
-                ActivityLifecycleHandler.removeActivityAvailableListener(TAG + message.messageId);
+                OneSignal.getInAppMessageController().messageWasDismissed(message);
+                removeActivityListener();
             }
         });
 
+        final ActivityLifecycleHandler activityLifecycleHandler = ActivityLifecycleListener.getActivityLifecycleHandler();
         // Fires event if available, which will call messageView.showInAppMessageView() for us.
-        ActivityLifecycleHandler.setActivityAvailableListener(TAG + message.messageId, this);
+        if (activityLifecycleHandler != null)
+            activityLifecycleHandler.addActivityAvailableListener(TAG + message.messageId, this);
     }
 
     // Allow Chrome Remote Debugging if OneSignal.LOG_LEVEL.DEBUG or higher
@@ -377,6 +425,11 @@ class WebViewManager extends ActivityLifecycleHandler.ActivityAvailableListener 
        return OSViewUtils.getWindowHeight(activity) - (MARGIN_PX_SIZE * 2);
     }
 
+    private void removeActivityListener() {
+        ActivityLifecycleHandler activityLifecycleHandler = ActivityLifecycleListener.getActivityLifecycleHandler();
+        if (activityLifecycleHandler != null)
+            activityLifecycleHandler.removeActivityAvailableListener(TAG + message.messageId);
+    }
     /**
      * Trigger the {@link #messageView} dismiss animation flow
      */

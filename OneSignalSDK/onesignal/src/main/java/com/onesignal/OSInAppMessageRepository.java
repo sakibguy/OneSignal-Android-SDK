@@ -2,7 +2,8 @@ package com.onesignal;
 
 import android.content.ContentValues;
 import android.database.Cursor;
-import android.support.annotation.WorkerThread;
+
+import androidx.annotation.WorkerThread;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -146,7 +147,6 @@ class OSInAppMessageRepository {
      * Note: This should only ever be called by {@link OSInAppMessageRepository#cleanCachedInAppMessages()}
      * <br/><br/>
      *
-     * @see OneSignalCacheCleaner#cleanCachedInAppMessages(OneSignalDbHelper)
      * @see OSInAppMessageRepository#cleanCachedInAppMessages()
      */
     private void cleanInAppMessageIds(Set<String> oldMessageIds) {
@@ -186,7 +186,6 @@ class OSInAppMessageRepository {
      * Note: This should only ever be called by {@link OSInAppMessageRepository#cleanCachedInAppMessages()}
      * <br/><br/>
      *
-     * @see OneSignalCacheCleaner#cleanCachedInAppMessages(OneSignalDbHelper)
      * @see OSInAppMessageRepository#cleanCachedInAppMessages()
      */
     private void cleanInAppMessageClickedClickIds(Set<String> oldClickedClickIds) {
@@ -205,6 +204,5 @@ class OSInAppMessageRepository {
             }
         }
     }
-
 
 }

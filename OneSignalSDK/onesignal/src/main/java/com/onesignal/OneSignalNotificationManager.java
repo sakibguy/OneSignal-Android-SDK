@@ -1,22 +1,26 @@
 package com.onesignal;
 
 import android.app.Notification;
+import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.database.Cursor;
 import android.os.Build;
 import android.service.notification.StatusBarNotification;
-import android.support.annotation.RequiresApi;
-import android.support.v4.app.NotificationCompat;
-import android.support.v4.app.NotificationManagerCompat;
+
+import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 
 import java.util.ArrayList;
+
+import static android.app.NotificationManager.IMPORTANCE_NONE;
 
 public class OneSignalNotificationManager {
 
     private static final String GROUPLESS_SUMMARY_KEY = "os_group_undefined";
     private static final int GROUPLESS_SUMMARY_ID = -718463522;
-
 
     static String getGrouplessSummaryKey() {
         return GROUPLESS_SUMMARY_KEY;
@@ -157,5 +161,19 @@ public class OneSignalNotificationManager {
         cursor.close();
 
         return recentId;
+    }
+
+    @Nullable
+    public static boolean areNotificationsEnabled(Context context, String channelId) {
+        boolean notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled();
+        if (!notificationsEnabled)
+            return false;
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            NotificationChannel channel = getNotificationManager(context).getNotificationChannel(channelId);
+            return channel == null || channel.getImportance() != IMPORTANCE_NONE;
+        }
+
+        return true;
     }
 }

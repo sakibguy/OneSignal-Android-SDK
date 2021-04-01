@@ -27,19 +27,23 @@
 
 package com.onesignal;
 
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
+
+import com.onesignal.OneSignal.ChangeTagsUpdateHandler;
 
 import org.json.JSONException;
 import org.json.JSONObject;
-import com.onesignal.OneSignal.ChangeTagsUpdateHandler;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 
 class OneSignalStateSynchronizer {
 
    enum UserStateSynchronizerType {
       PUSH,
-      EMAIL;
+      EMAIL,
+      SMS;
 
       public boolean isPush() {
          return this.equals(PUSH);
@@ -48,6 +52,10 @@ class OneSignalStateSynchronizer {
       public boolean isEmail() {
          return this.equals(EMAIL);
       }
+
+      public boolean isSMS() {
+         return this.equals(SMS);
+      }
    }
 
    // Each class abstracts from UserStateSynchronizer and this will allow us to handle different channels for specific method calls and requests
@@ -55,6 +63,7 @@ class OneSignalStateSynchronizer {
    // Currently we have 2 channels:
    //    1. Push
    //    2. Email
+   //    3. SMS
    //    Add more channels...
    private static HashMap<UserStateSynchronizerType, UserStateSynchronizer> userStateSynchronizers =  new HashMap<>();
 
@@ -73,29 +82,61 @@ class OneSignalStateSynchronizer {
 
       return (UserStateEmailSynchronizer) userStateSynchronizers.get(UserStateSynchronizerType.EMAIL);
    }
+
+   // #3 UserStateSynchronizer -> SMS Channel
+   static UserStateSMSSynchronizer getSMSStateSynchronizer() {
+      if (!userStateSynchronizers.containsKey(UserStateSynchronizerType.SMS) || userStateSynchronizers.get(UserStateSynchronizerType.SMS) == null)
+         userStateSynchronizers.put(UserStateSynchronizerType.SMS, new UserStateSMSSynchronizer());
+
+      return (UserStateSMSSynchronizer) userStateSynchronizers.get(UserStateSynchronizerType.SMS);
+   }
+
+   static List<UserStateSynchronizer> getUserStateSynchronizers() {
+      List<UserStateSynchronizer> userStateSynchronizers = new ArrayList<>();
+
+      userStateSynchronizers.add(getPushStateSynchronizer());
+
+      // Make sure we are only setting external user id for email when an email is actually set
+      if (OneSignal.hasEmailId())
+         userStateSynchronizers.add(getEmailStateSynchronizer());
+
+      // Make sure we are only setting external user id for sms when an sms is actually set
+      if (OneSignal.hasSMSlId())
+         userStateSynchronizers.add(getSMSStateSynchronizer());
+
+      return userStateSynchronizers;
+   }
    
    static boolean persist() {
       boolean pushPersisted = getPushStateSynchronizer().persist();
       boolean emailPersisted = getEmailStateSynchronizer().persist();
+      boolean smsPersisted =  getSMSStateSynchronizer().persist();
+
       if (emailPersisted)
          emailPersisted = getEmailStateSynchronizer().getRegistrationId() != null;
 
-      return pushPersisted || emailPersisted;
+      if (smsPersisted)
+         smsPersisted = getSMSStateSynchronizer().getRegistrationId() != null;
+
+      return pushPersisted || emailPersisted || smsPersisted;
    }
    
    static void clearLocation() {
       getPushStateSynchronizer().clearLocation();
       getEmailStateSynchronizer().clearLocation();
+      getSMSStateSynchronizer().clearLocation();
    }
 
    static void initUserState() {
       getPushStateSynchronizer().initUserState();
       getEmailStateSynchronizer().initUserState();
+      getSMSStateSynchronizer().initUserState();
    }
 
    static void syncUserState(boolean fromSyncService) {
       getPushStateSynchronizer().syncUserState(fromSyncService);
       getEmailStateSynchronizer().syncUserState(fromSyncService);
+      getSMSStateSynchronizer().syncUserState(fromSyncService);
    }
 
    static void sendTags(JSONObject newTags, @Nullable ChangeTagsUpdateHandler handler) {
@@ -103,6 +144,7 @@ class OneSignalStateSynchronizer {
          JSONObject jsonField = new JSONObject().put("tags", newTags);
          getPushStateSynchronizer().sendTags(jsonField, handler);
          getEmailStateSynchronizer().sendTags(jsonField, handler);
+         getSMSStateSynchronizer().sendTags(jsonField, handler);
       } catch (JSONException e) {
          if (handler != null)
             handler.onFailure(new OneSignal.SendTagsError(-1, "Encountered an error attempting to serialize your tags into JSON: " + e.getMessage() + "\n" + e.getStackTrace()));
@@ -110,21 +152,14 @@ class OneSignalStateSynchronizer {
       }
    }
 
-   static void syncHashedEmail(String email) {
-      try {
-         JSONObject emailFields = new JSONObject();
-         emailFields.put("em_m", OSUtils.hexDigest(email, "MD5"));
-         emailFields.put("em_s", OSUtils.hexDigest(email, "SHA-1"));
-
-         getPushStateSynchronizer().syncHashedEmail(emailFields);
-      } catch (Throwable t) {
-         t.printStackTrace();
-      }
+   static void setSMSNumber(String smsNumber, String smsAuthHash) {
+      getPushStateSynchronizer().setSMSNumber(smsNumber, smsAuthHash);
+      getSMSStateSynchronizer().setChannelId(smsNumber, smsAuthHash);
    }
 
    static void setEmail(String email, String emailAuthHash) {
       getPushStateSynchronizer().setEmail(email, emailAuthHash);
-      getEmailStateSynchronizer().setEmail(email, emailAuthHash);
+      getEmailStateSynchronizer().setChannelId(email, emailAuthHash);
    }
 
    static void setSubscription(boolean enable) {
@@ -142,6 +177,7 @@ class OneSignalStateSynchronizer {
    static void updateLocation(LocationController.LocationPoint point) {
       getPushStateSynchronizer().updateLocation(point);
       getEmailStateSynchronizer().updateLocation(point);
+      getSMSStateSynchronizer().updateLocation(point);
    }
 
    static boolean getSubscribed() {
@@ -159,9 +195,11 @@ class OneSignalStateSynchronizer {
    static void resetCurrentState() {
       getPushStateSynchronizer().resetCurrentState();
       getEmailStateSynchronizer().resetCurrentState();
+      getSMSStateSynchronizer().resetCurrentState();
 
-      OneSignal.saveUserId(null);
-      OneSignal.saveEmailId(null);
+      getPushStateSynchronizer().saveChannelId(null);
+      getEmailStateSynchronizer().saveChannelId(null);
+      getSMSStateSynchronizer().saveChannelId(null);
 
       OneSignal.setLastSessionTime(-60 * 61);
    }
@@ -169,24 +207,28 @@ class OneSignalStateSynchronizer {
    static void updateDeviceInfo(JSONObject deviceInfo) {
       getPushStateSynchronizer().updateDeviceInfo(deviceInfo);
       getEmailStateSynchronizer().updateDeviceInfo(deviceInfo);
+      getSMSStateSynchronizer().updateDeviceInfo(deviceInfo);
    }
 
    static void updatePushState(JSONObject pushState) {
       getPushStateSynchronizer().updateState(pushState);
    }
 
-   static void refreshEmailState() {
+   static void refreshSecondaryChannelState() {
       getEmailStateSynchronizer().refresh();
+      getSMSStateSynchronizer().refresh();
    }
 
    static void setNewSession() {
       getPushStateSynchronizer().setNewSession();
       getEmailStateSynchronizer().setNewSession();
+      getSMSStateSynchronizer().setNewSession();
    }
 
    static boolean getSyncAsNewSession() {
       return getPushStateSynchronizer().getSyncAsNewSession() ||
-             getEmailStateSynchronizer().getSyncAsNewSession();
+             getEmailStateSynchronizer().getSyncAsNewSession() ||
+              getSMSStateSynchronizer().getSyncAsNewSession();
    }
 
    static void setNewSessionForEmail() {
@@ -195,10 +237,15 @@ class OneSignalStateSynchronizer {
 
    static void logoutEmail() {
       getPushStateSynchronizer().logoutEmail();
-      getEmailStateSynchronizer().logoutEmail();
+      getEmailStateSynchronizer().logoutChannel();
    }
 
-   static void setExternalUserId(String externalId, final OneSignal.OSExternalUserIdUpdateCompletionHandler completionHandler) throws JSONException {
+   static void logoutSMS() {
+      getSMSStateSynchronizer().logoutChannel();
+      getPushStateSynchronizer().logoutSMS();
+   }
+
+   static void setExternalUserId(String externalId, String externalIdAuthHash, final OneSignal.OSExternalUserIdUpdateCompletionHandler completionHandler) throws JSONException {
       final JSONObject responses = new JSONObject();
       // Create a handler for internal usage, this is where the developers completion handler will be called,
       //  which happens once all handlers for each channel have been processed
@@ -227,17 +274,23 @@ class OneSignalStateSynchronizer {
                @Override
                public void run() {
                   if (completionHandler != null)
-                     completionHandler.onComplete(responses);
+                     completionHandler.onSuccess(responses);
                }
             });
          }
       };
 
-      getPushStateSynchronizer().setExternalUserId(externalId, handler);
+      List<UserStateSynchronizer> userStateSynchronizers = getUserStateSynchronizers();
+      for (UserStateSynchronizer userStateSynchronizer : userStateSynchronizers) {
+         userStateSynchronizer.setExternalUserId(externalId, externalIdAuthHash, handler);
+      }
+   }
 
-      // Make sure we are only setting external user id for email when an email is actually set
-      if (OneSignal.hasEmailId())
-         getEmailStateSynchronizer().setExternalUserId(externalId, handler);
+   static void sendPurchases(JSONObject jsonBody, OneSignalRestClient.ResponseHandler responseHandler) {
+      List<UserStateSynchronizer> userStateSynchronizers = getUserStateSynchronizers();
+      for (UserStateSynchronizer userStateSynchronizer : userStateSynchronizers) {
+         userStateSynchronizer.sendPurchases(jsonBody, responseHandler);
+      }
    }
 
    // This is to indicate that StateSynchronizer can start making REST API calls
@@ -246,6 +299,7 @@ class OneSignalStateSynchronizer {
    static void readyToUpdate(boolean canMakeUpdates) {
       getPushStateSynchronizer().readyToUpdate(canMakeUpdates);
       getEmailStateSynchronizer().readyToUpdate(canMakeUpdates);
+      getSMSStateSynchronizer().readyToUpdate(canMakeUpdates);
    }
 
 }

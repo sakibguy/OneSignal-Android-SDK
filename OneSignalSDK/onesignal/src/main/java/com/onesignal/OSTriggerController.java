@@ -1,10 +1,11 @@
 package com.onesignal;
 
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.onesignal.OSDynamicTriggerController.OSDynamicTriggerControllerObserver;
 
+import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Map;
@@ -116,8 +117,16 @@ class OSTriggerController {
             return false;
 
         // If operator is equal or not equals ignore type by comparing on toString values
-        if (operator.checksEquality())
-            return triggerMatchesStringValue(triggerValue.toString(), deviceValue.toString(), operator);
+        if (operator.checksEquality()) {
+            String triggerValueString = triggerValue.toString();
+            String deviceValueString = deviceValue.toString();
+            if (deviceValue instanceof Number) {
+                // User may have an input text that converts 5 to 5.0, we only care about the raw value on equals
+                DecimalFormat format = new DecimalFormat("0.#");
+                deviceValueString = format.format(deviceValue);
+            }
+            return triggerMatchesStringValue(triggerValueString, deviceValueString, operator);
+        }
 
         if (deviceValue instanceof String &&
             triggerValue instanceof Number)
@@ -172,10 +181,15 @@ class OSTriggerController {
      * If trigger key is part of message triggers, then return true, otherwise false
      * */
     boolean isTriggerOnMessage(OSInAppMessage message, Collection<String> newTriggersKeys) {
+        if (message.triggers == null)
+            return false;
+
         for (String triggerKey : newTriggersKeys) {
             for (ArrayList<OSTrigger> andConditions : message.triggers) {
                 for (OSTrigger trigger : andConditions) {
-                    if (triggerKey.equals(trigger.property)) {
+                    // Dynamic triggers depends on triggerId
+                    // Common triggers changed by user depends on property
+                    if (triggerKey.equals(trigger.property) || triggerKey.equals(trigger.triggerId)) {
                         // At least one trigger has changed
                         return true;
                     }
@@ -184,6 +198,26 @@ class OSTriggerController {
         }
 
         return false;
+    }
+
+    /**
+     * Part of redisplay logic
+     *
+     * If message has only dynamic trigger return true, otherwise false
+     * */
+    boolean messageHasOnlyDynamicTriggers(OSInAppMessage message) {
+        if (message.triggers == null || message.triggers.isEmpty())
+            return false;
+
+        for (ArrayList<OSTrigger> andConditions : message.triggers) {
+            for (OSTrigger trigger : andConditions) {
+                if (trigger.kind == OSTrigger.OSTriggerKind.CUSTOM || trigger.kind == OSTrigger.OSTriggerKind.UNKNOWN)
+                    // At least one trigger is not dynamic
+                    return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -213,5 +247,9 @@ class OSTriggerController {
             else
                 return null;
         }
+    }
+
+    public ConcurrentHashMap<String, Object> getTriggers() {
+        return triggers;
     }
 }

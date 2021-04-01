@@ -28,11 +28,13 @@
 package com.onesignal;
 
 import android.app.Activity;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.onesignal.OneSignal;
-import java.lang.reflect.Method;
+
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.lang.reflect.Method;
 
 public class OneSignalUnityProxy implements OneSignal.NotificationOpenedHandler, OneSignal.NotificationReceivedHandler, OSPermissionObserver, OSSubscriptionObserver, OSEmailSubscriptionObserver, OneSignal.InAppMessageClickHandler {
    private static String unityListenerName;
@@ -41,6 +43,7 @@ public class OneSignalUnityProxy implements OneSignal.NotificationOpenedHandler,
    public OneSignalUnityProxy(String listenerName, String googleProjectNumber, String oneSignalAppId, int logLevel, int visualLogLevel, boolean requiresUserPrivacyConsent) {
       unityListenerName = listenerName;
       try {
+         // TODO: Refactor this so that Unity SDK is init properly in major release 4.0.0
          OneSignal.setRequiresUserPrivacyConsent(requiresUserPrivacyConsent);
          Class unityPlayerClass = Class.forName("com.unity3d.player.UnityPlayer");
          unitySendMessage = unityPlayerClass.getMethod("UnitySendMessage", new Class[]{String.class, String.class, String.class});
@@ -289,6 +292,27 @@ public class OneSignalUnityProxy implements OneSignal.NotificationOpenedHandler,
 
    public void setExternalUserId(final String delegateId, String externalId) {
       OneSignal.setExternalUserId(externalId, new OneSignal.OSExternalUserIdUpdateCompletionHandler() {
+         @Override
+         public void onComplete(JSONObject results) {
+            try {
+               JSONObject params = new JSONObject();
+               params.put("delegate_id", new JSONObject().put("completion", delegateId).toString());
+               if (results == null) {
+                  params.put("response", "");
+                  OneSignalUnityProxy.unitySafeInvoke("onExternalUserIdUpdateCompletion", params.toString());
+                  return;
+               }
+               params.put("response", results.toString());
+               OneSignalUnityProxy.unitySafeInvoke("onExternalUserIdUpdateCompletion", params.toString());
+            } catch (JSONException e) {
+               e.printStackTrace();
+            }
+         }
+      });
+   }
+
+   public void setExternalUserId(final String delegateId, String externalId, String externalIdAuthHash) {
+      OneSignal.setExternalUserId(externalId, externalIdAuthHash, new OneSignal.OSExternalUserIdUpdateCompletionHandler() {
          @Override
          public void onComplete(JSONObject results) {
             try {

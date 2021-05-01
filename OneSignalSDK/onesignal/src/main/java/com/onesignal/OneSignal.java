@@ -398,7 +398,7 @@ public class OneSignal {
    private static TrackAmazonPurchase trackAmazonPurchase;
    private static TrackFirebaseAnalytics trackFirebaseAnalytics;
 
-   private static final String VERSION = "040300";
+   private static final String VERSION = "040303";
    public static String getSdkVersionRaw() {
       return VERSION;
    }
@@ -433,14 +433,6 @@ public class OneSignal {
    @Nullable private static OSNotificationDataController notificationDataController;
 
    @Nullable private static AdvertisingIdentifierProvider adIdProvider;
-   private static synchronized @Nullable AdvertisingIdentifierProvider getAdIdProvider() {
-      if (adIdProvider == null) {
-         if (OSUtils.isAndroidDeviceType())
-            adIdProvider = new AdvertisingIdProviderGPS();
-      }
-
-      return adIdProvider;
-   }
 
    @SuppressWarnings("WeakerAccess")
    public static String sdkType = "native";
@@ -1422,11 +1414,6 @@ public class OneSignal {
 
       deviceInfo.put("app_id", getSavedAppId());
 
-      if (getAdIdProvider() != null) {
-         String adId = getAdIdProvider().getIdentifier(appContext);
-         if (adId != null)
-            deviceInfo.put("ad_id", adId);
-      }
       deviceInfo.put("device_os", Build.VERSION.RELEASE);
       deviceInfo.put("timezone", getTimeZoneOffset());
       deviceInfo.put("timezone_id", getTimeZoneId());
@@ -2583,7 +2570,7 @@ public class OneSignal {
       return remoteParamController.isGMSMissingPromptDisable();
    }
 
-   static boolean isLocationShared() {
+   public static boolean isLocationShared() {
       return remoteParamController.isLocationShared();
    }
 

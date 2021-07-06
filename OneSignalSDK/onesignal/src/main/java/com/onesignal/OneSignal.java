@@ -698,10 +698,12 @@ public class OneSignal {
          return;
       }
 
-      boolean wasAppContextNull = (appContext == null);
-      appContext = context.getApplicationContext();
       if (context instanceof Activity)
          appActivity = new WeakReference<>((Activity) context);
+
+      boolean wasAppContextNull = (appContext == null);
+      appContext = context.getApplicationContext();
+
       setupContextListeners(wasAppContextNull);
       setupPrivacyConsent(appContext);
 
@@ -756,12 +758,12 @@ public class OneSignal {
             logger.verbose("OneSignal SDK initialization delayed, " +
                     "waiting for privacy consent to be set.");
 
-         delayedInitParams = new DelayedConsentInitializationParameters(context, appId);
+         delayedInitParams = new DelayedConsentInitializationParameters(appContext, appId);
          String lastAppId = appId;
          // Set app id null since OneSignal was not init fully
          appId = null;
          // Wrapper SDK's call init twice and pass null as the appId on the first call
-         //  the app ID is required to download parameters, so do not download params until the appID is provided
+         // the app ID is required to download parameters, so do not download params until the appID is provided
          if (lastAppId != null && context != null)
             makeAndroidParamsRequest(lastAppId, getUserId(), false);
          return;
@@ -833,14 +835,17 @@ public class OneSignal {
          // Prefs require a context to save
          // If the previous state of appContext was null, kick off write in-case it was waiting
          OneSignalPrefs.startDelayedWrite();
-         notificationDataController = new OSNotificationDataController(getDBHelperInstance(), logger);
+
+         OneSignalDbHelper dbHelper = getDBHelperInstance();
+         notificationDataController = new OSNotificationDataController(dbHelper, logger);
+
          // Cleans out old cached data to prevent over using the storage on devices
          notificationDataController.cleanOldCachedData();
 
          getInAppMessageController().cleanCachedInAppMessages();
 
          if (outcomeEventsFactory == null)
-            outcomeEventsFactory = new OSOutcomeEventsFactory(logger, apiClient, getDBHelperInstance(), preferences);
+            outcomeEventsFactory = new OSOutcomeEventsFactory(logger, apiClient, dbHelper, preferences);
 
          sessionManager.initSessionFromCache();
          outcomeEventsController = new OSOutcomeEventsController(sessionManager, outcomeEventsFactory);
@@ -889,11 +894,13 @@ public class OneSignal {
 
    private static void handleActivityLifecycleHandler(Context context) {
       ActivityLifecycleHandler activityLifecycleHandler = ActivityLifecycleListener.getActivityLifecycleHandler();
-      setInForeground(OneSignal.getCurrentActivity() != null || context instanceof Activity);
+      boolean isContextActivity = context instanceof Activity;
+      boolean isCurrentActivityNull = OneSignal.getCurrentActivity() == null;
+      setInForeground(!isCurrentActivityNull || isContextActivity);
       logger.debug("OneSignal handleActivityLifecycleHandler inForeground: " + inForeground);
 
       if (inForeground) {
-         if (OneSignal.getCurrentActivity() == null && activityLifecycleHandler != null) {
+         if (isCurrentActivityNull && isContextActivity && activityLifecycleHandler != null) {
             activityLifecycleHandler.setCurActivity((Activity) context);
             activityLifecycleHandler.setNextResumeIsFirstActivity(true);
          }
@@ -1086,8 +1093,8 @@ public class OneSignal {
          delayedContext = appContext;
          logger.error("Trying to continue OneSignal with null delayed params");
       } else {
-         delayedAppId = delayedInitParams.appId;
-         delayedContext = delayedInitParams.context;
+         delayedAppId = delayedInitParams.getAppId();
+         delayedContext = delayedInitParams.getContext();
       }
 
       logger.debug("reassignDelayedInitParams with appContext: " + appContext);
@@ -3059,7 +3066,21 @@ public class OneSignal {
       return !getInAppMessageController().inAppMessagingEnabled();
    }
 
-   static void notValidOrDuplicated(JSONObject jsonPayload, OSNotificationDataController.InvalidOrDuplicateNotificationCallback callback) {
+   /**
+    * Method that checks if notification is valid or duplicated.
+    *
+    * Method called from Notification processing. This might be called from a flow that doesn't call initWithContext yet.
+    * Check if notificationDataController is not init before processing notValidOrDuplicated
+    *
+    * @param context the context from where the notification was received
+    * @param jsonPayload the notification payload in a JSON format
+    * @param callback the callback to return the result since this method does DB access in another thread
+    * */
+   static void notValidOrDuplicated(Context context, JSONObject jsonPayload, @NonNull OSNotificationDataController.InvalidOrDuplicateNotificationCallback callback) {
+      if (notificationDataController == null) {
+          OneSignalDbHelper helper = OneSignal.getDBHelperInstance(context);
+          notificationDataController = new OSNotificationDataController(helper, logger);
+      }
       notificationDataController.notValidOrDuplicated(jsonPayload, callback);
    }
 
@@ -3198,6 +3219,10 @@ public class OneSignal {
 
    static OneSignalDbHelper getDBHelperInstance() {
       return OneSignalDbHelper.getInstance(appContext);
+   }
+
+   static OneSignalDbHelper getDBHelperInstance(Context context) {
+       return OneSignalDbHelper.getInstance(context);
    }
 
    static OSTaskController getTaskRemoteController() {

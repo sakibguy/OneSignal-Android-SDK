@@ -82,7 +82,7 @@ public class FCMBroadcastReceiver extends WakefulBroadcastReceiver {
             // Prevent other FCM receivers from firing if:
             //   1. This is a duplicated FCM message
             //   2. OR work manager is processing the notification
-            if (processedResult.isDup || processedResult.isWorkManagerProcessing) {
+            if (processedResult.isDup() || processedResult.isWorkManagerProcessing()) {
                // Abort to prevent other FCM receivers from process this Intent.
                setAbort();
                return;
@@ -126,7 +126,7 @@ public class FCMBroadcastReceiver extends WakefulBroadcastReceiver {
          @Override
          public void onBundleProcessed(@Nullable ProcessedBundleResult processedResult) {
             // Return if the notification will NOT be handled by normal FCMIntentService display flow.
-            if (processedResult!= null && processedResult.processed()){
+            if (processedResult!= null && processedResult.processed()) {
                fcmBundleReceiver.onBundleProcessed(processedResult);
                return;
             }

@@ -30,6 +30,7 @@ package com.test.onesignal;
 import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.job.JobScheduler;
 import android.content.ComponentName;
 import android.content.Context;
@@ -1131,6 +1132,64 @@ public class GenerateNotificationRunner {
 
    @Test
    @Config(shadows = { ShadowGenerateNotification.class })
+   public void shouldSetContentIntentForLaunchURL() throws Exception {
+      generateNotificationWithLaunchURL();
+
+      Intent[] intents = lastNotificationIntents();
+      assertEquals(2, intents.length);
+      Intent intentLaunchURL = intents[0];
+      assertEquals("android.intent.action.VIEW", intentLaunchURL.getAction());
+      assertEquals("https://google.com", intentLaunchURL.getData().toString());
+
+      assertNotificationOpenedReceiver(intents[1]);
+   }
+
+   @Test
+   @Config(shadows = { ShadowGenerateNotification.class })
+   public void shouldNotSetContentIntentForLaunchURLIfDefaultNotificationOpenIsDisabled() throws Exception {
+      OneSignalShadowPackageManager.addManifestMetaData("com.onesignal.NotificationOpened.DEFAULT", "DISABLE");
+      generateNotificationWithLaunchURL();
+
+      Intent[] intents = lastNotificationIntents();
+      assertEquals(1, intents.length);
+      assertNotificationOpenedReceiver(intents[0]);
+   }
+
+   @Test
+   @Config(shadows = { ShadowGenerateNotification.class })
+   public void shouldNotSetContentIntentForLaunchURLIfSuppress() throws Exception {
+      OneSignalShadowPackageManager.addManifestMetaData("com.onesignal.suppressLaunchURLs", true);
+      generateNotificationWithLaunchURL();
+
+      Intent[] intents = lastNotificationIntents();
+      assertEquals(2, intents.length);
+      assertOpenMainActivityIntent(intents[0]);
+      assertNotificationOpenedReceiver(intents[1]);
+   }
+
+   private Intent[] lastNotificationIntents() {
+      PendingIntent pendingIntent = ShadowRoboNotificationManager.getLastNotif().contentIntent;
+      // NOTE: This is fragile until this robolectric issue is fixed: https://github.com/robolectric/robolectric/issues/6660
+      return shadowOf(pendingIntent).getSavedIntents();
+   }
+
+   private void generateNotificationWithLaunchURL() throws Exception {
+      Bundle bundle = launchURLMockPayloadBundle();
+      NotificationBundleProcessor_ProcessFromFCMIntentService(blankActivity, bundle);
+      threadAndTaskWait();
+   }
+
+   private void assertNotificationOpenedReceiver(@NonNull Intent intent) {
+      assertEquals("com.onesignal.NotificationOpenedReceiver", intent.getComponent().getClassName());
+   }
+
+   private void assertOpenMainActivityIntent(@NonNull Intent intent) {
+      assertEquals(Intent.ACTION_MAIN, intent.getAction());
+      assertTrue(intent.getCategories().contains(Intent.CATEGORY_LAUNCHER));
+   }
+
+   @Test
+   @Config(shadows = { ShadowGenerateNotification.class })
    public void shouldSetAlertnessFieldsOnNormalPriority() {
       Bundle bundle = getBaseNotifBundle();
       bundle.putString("pri", "5"); // Notifications from dashboard have priority 5 by default
@@ -1211,6 +1270,17 @@ public class GenerateNotificationRunner {
       return bundle;
    }
 
+   @NonNull
+   private static Bundle launchURLMockPayloadBundle() throws JSONException {
+      Bundle bundle = new Bundle();
+      bundle.putString("alert", "test");
+      bundle.putString("custom", new JSONObject() {{
+         put("i", "UUID");
+         put("u", "https://google.com");
+      }}.toString());
+      return bundle;
+   }
+
    @Test
    @Config(shadows = { ShadowOneSignalRestClient.class, ShadowOSWebView.class })
    public void shouldShowInAppPreviewWhenInFocus() throws Exception {
@@ -1268,7 +1338,10 @@ public class GenerateNotificationRunner {
       assertReportReceivedAtIndex(
          2,
          "UUID",
-         new JSONObject().put("app_id", appId).put("player_id", ShadowOneSignalRestClient.pushUserId)
+         new JSONObject()
+                 .put("app_id", appId)
+                 .put("player_id", ShadowOneSignalRestClient.pushUserId)
+                 .put("device_type", 1)
       );
    }
 
